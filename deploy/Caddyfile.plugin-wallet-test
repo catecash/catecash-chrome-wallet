@@ -1,0 +1,9 @@
+plugin-wallet-test.catecash.com {
+    @gateway {
+        path /status /broadcast /utxos/*
+    }
+    handle @gateway {
+        reverse_proxy 127.0.0.1:34777
+    }
+    respond 404
+}

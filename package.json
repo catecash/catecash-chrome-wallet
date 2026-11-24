@@ -1,0 +1,15 @@
+{
+  "name": "catecash-chrome-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build:engine": "node engine/build.mjs",
+    "gateway": "node gateway.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

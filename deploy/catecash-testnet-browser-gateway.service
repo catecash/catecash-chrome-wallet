@@ -1,0 +1,25 @@
+[Unit]
+Description=Catecash testnet browser wallet HTTP gateway
+After=network-online.target catescan-testnet-tunnel.service
+Wants=network-online.target
+Requires=catescan-testnet-tunnel.service
+
+[Service]
+Type=simple
+User=catescan
+Group=catescan
+WorkingDirectory=/opt/catecash-browser-gateway
+Environment=CATE_GATEWAY_NETWORK=testnet
+Environment=CATE_RPC_URL=http://127.0.0.1:34352/
+Environment=CATE_GATEWAY_PORT=34777
+ExecStart=/opt/node-v24/bin/node /opt/catecash-browser-gateway/gateway.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+node_modules/
+engine/target/
+engine/pkg/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
