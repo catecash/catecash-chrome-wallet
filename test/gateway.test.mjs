@@ -29,6 +29,12 @@ test('local gateway verifies devnet and passes only public UTXOs and signed byte
     assert.equal(data.utxos.length, 1);
     const rejected = await fetch(base + '/broadcast', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
     assert.equal(rejected.status, 403);
+    const preflight = await fetch(base + '/broadcast', { method: 'OPTIONS', headers: { origin: 'safari-web-extension://12345678-1234-1234-1234-123456789abc', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } });
+    assert.equal(preflight.status, 200);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'safari-web-extension://12345678-1234-1234-1234-123456789abc');
+    const webPreflight = await fetch(base + '/broadcast', { method: 'OPTIONS', headers: { origin: 'https://evil.example' } });
+    assert.equal(webPreflight.status, 403);
+    assert.equal(webPreflight.headers.get('access-control-allow-origin'), null);
     const broadcast = await fetch(base + '/broadcast', { method: 'POST', headers: { origin: 'chrome-extension://test', 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
     for (const origin of ['moz-extension://12345678-1234-1234-1234-123456789abc', 'safari-web-extension://12345678-1234-1234-1234-123456789abc']) {
       const accepted = await fetch(base + '/broadcast', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });

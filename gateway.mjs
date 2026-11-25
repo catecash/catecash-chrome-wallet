@@ -40,12 +40,24 @@ export function createGateway({ rpc, network = 'devnet' }) {
     return info.blocks;
   }
   return createServer(async (request, response) => {
+    const origin = String(request.headers.origin ?? '');
+    const extensionOrigin = EXTENSION_ORIGIN.test(origin);
+    if (extensionOrigin) {
+      response.setHeader('access-control-allow-origin', origin);
+      response.setHeader('vary', 'Origin');
+    }
     const send = (code, data) => {
       response.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       response.end(JSON.stringify(data));
     };
     try {
       const url = new URL(request.url, 'http://localhost');
+      if (request.method === 'OPTIONS' && url.pathname === '/broadcast') {
+        if (!extensionOrigin) return send(403, { error: 'Browser extension origin required.' });
+        response.setHeader('access-control-allow-methods', 'POST');
+        response.setHeader('access-control-allow-headers', 'content-type');
+        return send(200, { ok: true });
+      }
       if (request.method === 'GET' && url.pathname === '/status') {
         return send(200, { chain: config.chain, genesis: config.genesis, height: await verifiedTip() });
       }
@@ -82,7 +94,7 @@ export function createGateway({ rpc, network = 'devnet' }) {
         return send(200, { chain: config.chain, genesis: config.genesis, height, address, utxos: selected });
       }
       if (request.method === 'POST' && url.pathname === '/broadcast') {
-        if (!EXTENSION_ORIGIN.test(String(request.headers.origin ?? ''))) return send(403, { error: 'Browser extension origin required.' });
+        if (!extensionOrigin) return send(403, { error: 'Browser extension origin required.' });
         if (request.headers['content-type']?.split(';')[0] !== 'application/json') return send(415, { error: 'JSON required.' });
         let text = '';
         for await (const chunk of request) {
