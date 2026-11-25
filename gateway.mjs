@@ -7,6 +7,7 @@ const NETWORKS = {
 };
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{20,100}$/;
 const HEX = /^[0-9a-fA-F]+$/;
+const EXTENSION_ORIGIN = /^(?:chrome-extension|moz-extension|safari-web-extension):\/\/[a-zA-Z0-9-]+$/;
 
 export function createRpc({ url = 'http://127.0.0.1:34342/', cookieFile, user, password, fetchImpl = fetch }) {
   return async (method, params = []) => {
@@ -81,7 +82,7 @@ export function createGateway({ rpc, network = 'devnet' }) {
         return send(200, { chain: config.chain, genesis: config.genesis, height, address, utxos: selected });
       }
       if (request.method === 'POST' && url.pathname === '/broadcast') {
-        if (!String(request.headers.origin ?? '').startsWith('chrome-extension://')) return send(403, { error: 'Chrome extension origin required.' });
+        if (!EXTENSION_ORIGIN.test(String(request.headers.origin ?? ''))) return send(403, { error: 'Browser extension origin required.' });
         if (request.headers['content-type']?.split(';')[0] !== 'application/json') return send(415, { error: 'JSON required.' });
         let text = '';
         for await (const chunk of request) {

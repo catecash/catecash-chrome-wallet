@@ -30,6 +30,12 @@ test('local gateway verifies devnet and passes only public UTXOs and signed byte
     const rejected = await fetch(base + '/broadcast', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
     assert.equal(rejected.status, 403);
     const broadcast = await fetch(base + '/broadcast', { method: 'POST', headers: { origin: 'chrome-extension://test', 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
+    for (const origin of ['moz-extension://12345678-1234-1234-1234-123456789abc', 'safari-web-extension://12345678-1234-1234-1234-123456789abc']) {
+      const accepted = await fetch(base + '/broadcast', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
+      assert.equal(accepted.status, 200);
+    }
+    const spoofed = await fetch(base + '/broadcast', { method: 'POST', headers: { origin: 'chrome-extension://test.evil.example', 'content-type': 'application/json' }, body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-devnet', genesis }) });
+    assert.equal(spoofed.status, 403);
     const submitted = await broadcast.json();
     assert.equal(submitted.txid, '03'.repeat(32));
     assert.equal(submitted.height, 300);

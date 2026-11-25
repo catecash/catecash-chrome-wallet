@@ -44,7 +44,7 @@ For local devnet development, run Zebra JSON-RPC on loopback and start the gatew
 CATE_GATEWAY_NETWORK=devnet CATE_RPC_URL=http://127.0.0.1:34342/ CATE_RPC_COOKIE_FILE=/path/to/devnet/.cookie npm run gateway
 ```
 
-The hosted service runs on the testnet explorer VM using the existing restricted RPC tunnel; see `deploy/`. The gateway listens only on loopback and Caddy publishes three HTTP routes. It accepts broadcasts only from a `chrome-extension://` origin, has no CORS allowance for web pages, and exposes no general RPC method. An Origin header is a browser boundary, not client authentication, so this endpoint must never receive private keys or unsigned transaction requests.
+The hosted service runs on the testnet explorer VM using the existing restricted RPC tunnel; see `deploy/`. The gateway listens only on loopback and Caddy publishes three HTTP routes. It accepts broadcasts only from `chrome-extension://`, `moz-extension://`, or `safari-web-extension://` origins, has no CORS allowance for web pages, and exposes no general RPC method. An Origin header is a browser boundary, not client authentication, so this endpoint must never receive private keys or unsigned transaction requests.
 
 The CATE account is a single transparent key, not a Zcash-style seed wallet. Importing its WIF into another wallet requires that wallet to support the selected Catecash network and address format. RPC and explorer services see queried addresses. Before using real funds, test backup restoration in a clean browser profile and verify the network details with current project release notes.
 
