@@ -1,5 +1,7 @@
 # Catecash Chrome Wallet (alpha)
 
+For repository SSH setup, push checks, and required post-push reporting, see [GitHub push requirements](docs/GITHUB-PUSH.md).
+
 Manifest V3 Chrome extension for a single transparent Catecash account. It can receive CATE on devnet, testnet, and the current mainnet candidate. It can build, review, sign, and broadcast CATE sends on devnet and testnet. Mainnet sending remains disabled while those paths are tested.
 
 The Catecash private key is stored in an AES-256-GCM encrypted backup in `chrome.storage.local`; PBKDF2-SHA256 uses 600,000 iterations and a random salt. The password and decrypted key remain only in the popup session. This browser wallet has its own password and key; the iOS app password does not unlock it. Export an encrypted backup immediately after creation. The password cannot be reset without the key. Backups from earlier two-key versions can still be restored; they retain their original encrypted contents, but this extension uses only the Catecash key.
