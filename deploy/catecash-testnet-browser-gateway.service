@@ -6,20 +6,10 @@ Requires=catescan-testnet-tunnel.service
 
 [Service]
 Type=simple
-User=catescan
-Group=catescan
-WorkingDirectory=/opt/catecash-browser-gateway
-Environment=CATE_GATEWAY_NETWORK=testnet
-Environment=CATE_RPC_URL=http://127.0.0.1:34352/
-Environment=CATE_GATEWAY_PORT=34777
-ExecStart=/opt/node-v24/bin/node /opt/catecash-browser-gateway/gateway.mjs
+ExecStart=/usr/bin/podman run --rm --replace --pull=never --name catecash-testnet-browser-gateway --network host --read-only --cap-drop=all --security-opt=no-new-privileges --user 996:987 --volume /opt/catecash-browser-gateway/gateway.mjs:/app/gateway.mjs:ro --workdir /app --env CATE_GATEWAY_NETWORK=testnet --env CATE_RPC_URL=http://127.0.0.1:34352/ --env CATE_GATEWAY_PORT=34777 docker.io/library/node:24-alpine node gateway.mjs
+ExecStop=/usr/bin/podman stop -t 10 catecash-testnet-browser-gateway
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

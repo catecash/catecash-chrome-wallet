@@ -3,11 +3,21 @@ import { readFile } from 'node:fs/promises';
 
 const NETWORKS = {
   devnet: { chain: 'catecash-devnet', genesis: '6b9c4d783359202111571c123309b2c0511d1bf9036f74dee4921f04e1f0a9cf', rpc: 'http://127.0.0.1:34342/' },
-  testnet: { chain: 'catecash-testnet', genesis: '15999c77e978a180c2f3fe2ec8478f8123e5c923f20bedaaf1b156fc38c4dda2', rpc: 'http://127.0.0.1:34352/' }
+  testnet: { chain: 'catecash-testnet', genesis: '15999c77e978a180c2f3fe2ec8478f8123e5c923f20bedaaf1b156fc38c4dda2', rpc: 'http://127.0.0.1:34352/' },
+  mainnet: { chain: 'catecash-mainnet', genesis: '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323', rpc: 'http://127.0.0.1:34332/' }
 };
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{20,100}$/;
 const HEX = /^[0-9a-fA-F]+$/;
 const EXTENSION_ORIGIN = /^(?:chrome-extension|moz-extension|safari-web-extension):\/\/[a-zA-Z0-9-]+$/;
+
+class RpcRejection extends Error {
+  constructor(method, code, reason) {
+    super(`Zebra RPC rejected ${method}: ${reason}`);
+    this.method = method;
+    this.code = code;
+    this.reason = reason;
+  }
+}
 
 export function createRpc({ url = 'http://127.0.0.1:34342/', cookieFile, user, password, fetchImpl = fetch }) {
   return async (method, params = []) => {
@@ -25,14 +35,18 @@ export function createRpc({ url = 'http://127.0.0.1:34342/', cookieFile, user, p
     if (!response.ok) throw new Error(`Zebra RPC HTTP ${response.status}.`);
     const raw = await response.text();
     const body = JSON.parse(raw.replace(/"satoshis"\s*:\s*(\d+)/g, '"satoshis":"$1"'));
-    if (body.error) throw new Error(`Zebra RPC rejected ${method}.`);
+    if (body.error) {
+      const code = Number.isInteger(body.error.code) ? body.error.code : null;
+      const reason = String(body.error.message ?? 'Unknown RPC error.').slice(0, 500);
+      throw new RpcRejection(method, code, reason);
+    }
     return body.result;
   };
 }
 
 export function createGateway({ rpc, network = 'devnet' }) {
   const config = NETWORKS[network];
-  if (!config) throw new Error('Choose Catecash devnet or testnet.');
+  if (!config) throw new Error('Choose a Catecash network.');
   async function verifiedTip() {
     const [info, genesis] = await Promise.all([rpc('getblockchaininfo'), rpc('getblockhash', [0])]);
     if (info?.chain !== config.chain || String(genesis).toLowerCase() !== config.genesis) throw new Error('Wrong Catecash chain or genesis.');
@@ -67,7 +81,7 @@ export function createGateway({ rpc, network = 'devnet' }) {
         if (!ADDRESS.test(address)) return send(400, { error: 'Invalid address.' });
         const height = await verifiedTip();
         const data = await rpc('getaddressutxos', [{ addresses: [address] }]);
-        if (!Array.isArray(data) || data.length > 100) throw new Error('Invalid UTXO response.');
+        if (!Array.isArray(data) || data.length > 10_000) throw new Error('Invalid UTXO response.');
         const utxos = data.map(item => {
           if (String(item.address) !== address || !/^[0-9a-fA-F]{64}$/.test(item.txid) ||
             !HEX.test(item.script) || !Number.isSafeInteger(item.outputIndex) || item.outputIndex < 0 ||
@@ -76,21 +90,29 @@ export function createGateway({ rpc, network = 'devnet' }) {
           return { txid: item.txid, index: item.outputIndex, script_hex: item.script,
             value: String(item.satoshis), height: item.height, coinbase: false };
         });
-        const uniqueTxids = [...new Set(utxos.map(item => item.txid))];
+        const confirmations = utxo => height - utxo.height + 1;
+        const byValue = (a, b) => BigInt(a.value) > BigInt(b.value) ? -1 : BigInt(a.value) < BigInt(b.value) ? 1 : 0;
+        const candidates = utxos.filter(utxo => confirmations(utxo) >= 10).sort(byValue);
         const transactions = new Map();
-        for (let i = 0; i < uniqueTxids.length; i += 10) {
-          const batch = await Promise.all(uniqueTxids.slice(i, i + 10).map(async txid => {
-            const tx = await rpc('getrawtransaction', [txid, 1]);
-            return [txid, Boolean(tx?.vin?.[0]?.coinbase)];
-          }));
-          for (const pair of batch) transactions.set(...pair);
+        const spendable = [];
+        const mined = [];
+        for (let i = 0; i < candidates.length && spendable.length < 20; i += 20) {
+          const batch = candidates.slice(i, i + 20);
+          const txids = [...new Set(batch.map(utxo => utxo.txid))].filter(txid => !transactions.has(txid));
+          for (let j = 0; j < txids.length; j += 10) {
+            const results = await Promise.all(txids.slice(j, j + 10).map(async txid => {
+              const tx = await rpc('getrawtransaction', [txid, 1]);
+              return [txid, Boolean(tx?.vin?.[0]?.coinbase)];
+            }));
+            for (const pair of results) transactions.set(...pair);
+          }
+          for (const utxo of batch) {
+            utxo.coinbase = transactions.get(utxo.txid);
+            if (!utxo.coinbase) spendable.push(utxo);
+            else if (confirmations(utxo) >= 240) mined.push(utxo);
+          }
         }
-        const mature = utxos.filter(utxo => {
-          utxo.coinbase = transactions.get(utxo.txid);
-          return height - utxo.height + 1 >= (utxo.coinbase ? 240 : 10);
-        });
-        mature.sort((a, b) => BigInt(a.value) > BigInt(b.value) ? -1 : BigInt(a.value) < BigInt(b.value) ? 1 : 0);
-        const selected = mature.slice(0, 20);
+        const selected = spendable.length ? spendable.slice(0, 20) : mined.slice(0, 20);
         return send(200, { chain: config.chain, genesis: config.genesis, height, address, utxos: selected });
       }
       if (request.method === 'POST' && url.pathname === '/broadcast') {
@@ -111,15 +133,19 @@ export function createGateway({ rpc, network = 'devnet' }) {
         return send(200, { chain: config.chain, genesis: config.genesis, height, txid });
       }
       return send(404, { error: 'Unknown route.' });
-    } catch {
-      return send(503, { error: 'Catecash devnet gateway or node is unavailable.' });
+    } catch (error) {
+      console.error('Catecash gateway request failed:', error?.message ?? error);
+      if (error instanceof RpcRejection && error.method === 'sendrawtransaction') {
+        return send(422, { error: 'Catecash node rejected the transaction.' });
+      }
+      return send(503, { error: 'Catecash gateway or node is unavailable.' });
     }
   });
 }
 
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
   const network = process.env.CATE_GATEWAY_NETWORK ?? 'devnet';
-  if (!NETWORKS[network]) throw new Error('Choose Catecash devnet or testnet.');
+  if (!NETWORKS[network]) throw new Error('Choose a Catecash network.');
   const rpc = createRpc({
     url: process.env.CATE_RPC_URL ?? NETWORKS[network].rpc,
     cookieFile: process.env.CATE_RPC_COOKIE_FILE,

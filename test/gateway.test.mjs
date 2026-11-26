@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGateway } from '../gateway.mjs';
+import { createGateway, createRpc } from '../gateway.mjs';
 const genesis = '6b9c4d783359202111571c123309b2c0511d1bf9036f74dee4921f04e1f0a9cf';
 const address = 'yPeC241BhV8S3oRB58xPobSFzJXkhYxwhKK';
 
@@ -74,5 +74,99 @@ test('testnet gateway reports its own verified chain identity', async () => {
     const data = await response.json();
     assert.equal(data.chain, 'catecash-testnet');
     assert.equal(data.genesis, testnetGenesis);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('mainnet gateway verifies the candidate genesis before serving wallet data', async () => {
+  const mainnetGenesis = '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323';
+  let genesis = mainnetGenesis;
+  const rpc = async method => method === 'getblockchaininfo'
+    ? { chain: 'catecash-mainnet', blocks: 300 }
+    : genesis;
+  const server = createGateway({ rpc, network: 'mainnet' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const response = await fetch(base + '/status');
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).genesis, mainnetGenesis);
+    genesis = '00'.repeat(32);
+    assert.equal((await fetch(base + '/status')).status, 503);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('mainnet gateway selects mature coins from addresses with over 100 UTXOs', async () => {
+  const mainnetGenesis = '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323';
+  const publicAddress = 'CaW9SGDziC187NEtCixMYktjYDyQG5HLvnr';
+  let transactionLookups = 0;
+  const rpc = async method => {
+    if (method === 'getblockchaininfo') return { chain: 'catecash-mainnet', blocks: 600 };
+    if (method === 'getblockhash') return mainnetGenesis;
+    if (method === 'getaddressutxos') return Array.from({ length: 150 }, (_, index) => ({
+      address: publicAddress, txid: index.toString(16).padStart(64, '0'), outputIndex: 0,
+      script: '76a914' + '11'.repeat(20) + '88ac', satoshis: String(1000 + index), height: 1,
+    }));
+    if (method === 'getrawtransaction') { transactionLookups++; return { vin: [{ coinbase: 'abcd' }] }; }
+    throw new Error('Unexpected RPC method.');
+  };
+  const server = createGateway({ rpc, network: 'mainnet' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/utxos/' + publicAddress);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.equal(data.utxos.length, 20);
+    assert.ok(data.utxos.every(utxo => utxo.coinbase));
+    assert.equal(transactionLookups, 150);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('mainnet gateway finds an ordinary UTXO behind many mining rewards', async () => {
+  const publicAddress = 'CaW9SGDziC187NEtCixMYktjYDyQG5HLvnr';
+  const ordinaryTxid = 'ff'.repeat(32);
+  const rpc = async (method, params) => {
+    if (method === 'getblockchaininfo') return { chain: 'catecash-mainnet', blocks: 600 };
+    if (method === 'getblockhash') return '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323';
+    if (method === 'getaddressutxos') return [
+      ...Array.from({ length: 150 }, (_, index) => ({
+        address: publicAddress, txid: index.toString(16).padStart(64, '0'), outputIndex: 0,
+        script: '76a914' + '11'.repeat(20) + '88ac', satoshis: '100000000', height: 1,
+      })),
+      { address: publicAddress, txid: ordinaryTxid, outputIndex: 0,
+        script: '76a914' + '11'.repeat(20) + '88ac', satoshis: '50000000', height: 580 },
+    ];
+    if (method === 'getrawtransaction') return { vin: [params[0] === ordinaryTxid ? { txid: 'aa' } : { coinbase: 'abcd' }] };
+    throw new Error('Unexpected RPC method.');
+  };
+  const server = createGateway({ rpc, network: 'mainnet' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/utxos/' + publicAddress);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.deepEqual(data.utxos.map(utxo => [utxo.txid, utxo.coinbase]), [[ordinaryTxid, false]]);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('a rejected signed transaction returns 422 while the gateway stays healthy', async () => {
+  const rpc = createRpc({ fetchImpl: async (_url, request) => {
+    const { method } = JSON.parse(request.body);
+    const result = method === 'getblockchaininfo' ? { chain: 'catecash-mainnet', blocks: 300 }
+      : method === 'getblockhash' ? '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323' : null;
+    return { ok: true, text: async () => JSON.stringify(method === 'sendrawtransaction'
+      ? { error: { code: -26, message: 'unshielded transparent coinbase spend' } }
+      : { result }) };
+  } });
+  const server = createGateway({ rpc, network: 'mainnet' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const response = await fetch(base + '/broadcast', { method: 'POST',
+      headers: { origin: 'chrome-extension://test', 'content-type': 'application/json' },
+      body: JSON.stringify({ raw_hex: '00'.repeat(10), chain: 'catecash-mainnet',
+        genesis: '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323' }) });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error, 'Catecash node rejected the transaction.');
+    assert.equal((await fetch(base + '/status')).status, 200);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

@@ -1,0 +1,15 @@
+[Unit]
+Description=Catecash mainnet browser wallet gateway container
+After=network-online.target catecash-mainnet-candidate.service
+Wants=network-online.target
+Requires=catecash-mainnet-candidate.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/podman run --rm --replace --pull=never --name catecash-mainnet-browser-gateway --network host --read-only --cap-drop=all --security-opt=no-new-privileges --user 999:988 --volume /opt/catecash-browser-gateway/gateway.mjs:/app/gateway.mjs:ro --volume /var/lib/catecash-mainnet-candidate/.cache/zebra/.cookie:/run/secrets/zebra_rpc_cookie:ro --workdir /app --env CATE_GATEWAY_NETWORK=mainnet --env CATE_RPC_URL=http://127.0.0.1:34332/ --env CATE_RPC_COOKIE_FILE=/run/secrets/zebra_rpc_cookie --env CATE_GATEWAY_PORT=34778 docker.io/library/node:24-alpine node gateway.mjs
+ExecStop=/usr/bin/podman stop -t 10 catecash-mainnet-browser-gateway
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
