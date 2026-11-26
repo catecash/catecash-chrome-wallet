@@ -13,6 +13,17 @@ const publicKey = publicKeyFromSecret(key);
 const script_hex = '76a914' + Buffer.from(hash160(createHash('sha256').update(publicKey).digest())).toString('hex') + '88ac';
 const wasm = await readFile(new URL('../engine/pkg/catecash_browser_engine.wasm', import.meta.url));
 
+test('Ironwood scan accepts the node frontier padding at mainnet block 248', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/mainnet-ironwood-248.json', import.meta.url)));
+  const sign = await createSigner(wasm);
+  const request = { network: 'mainnet', shield_seed_hex: '02'.repeat(32), notes: [], ...fixture };
+  const result = sign.scanIronwood(request);
+  assert.equal(result.height, 248);
+  assert.equal(result.tree_hex, fixture.expected_tree_hex);
+  assert.throws(() => sign.scanIronwood({ ...request, expected_tree_hex: fixture.previous_tree_hex }),
+    /Ironwood commitments disagree/);
+});
+
 test('browser WebAssembly signs a Catecash devnet transaction using the existing key format', async () => {
   const sign = await createSigner(wasm);
   const request = { network: 'devnet', secret_hex, destination: source, amount: '500000', tip_height: 300,

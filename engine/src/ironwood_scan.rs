@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use zcash_note_encryption::try_note_decryption;
 use zcash_primitives::block::Block;
 use zcash_primitives::merkle_tree::{
-    read_commitment_tree, read_incremental_witness, write_commitment_tree,
-    write_incremental_witness,
+    read_commitment_tree, read_incremental_witness, write_incremental_witness,
 };
 
 use crate::{CateNetwork, ironwood};
@@ -107,15 +106,15 @@ pub fn scan_block(request: ScanRequest) -> Result<ScanResult, String> {
     let mut expected_reader = expected_bytes.as_slice();
     let expected: CommitmentTree<MerkleHashOrchard, 32> =
         read_commitment_tree(&mut expected_reader).map_err(|_| "invalid expected Ironwood tree")?;
-    if !expected_reader.is_empty() || expected != tree {
+    // The node may serialize unused parent slots, while local appends keep a shorter
+    // frontier. Both represent the same tree when their size and root agree.
+    if !expected_reader.is_empty() || expected.size() != tree.size() || expected.root() != tree.root() {
         return Err("Ironwood commitments disagree with node tree state".into());
     }
-    let mut tree_state = Vec::new();
-    write_commitment_tree(&tree, &mut tree_state).map_err(|_| "cannot store Ironwood tree")?;
     let balance = notes.iter().try_fold(0u64, |sum, note| {
         let value: u64 = note.value.parse().map_err(|_| "invalid note amount")?;
         sum.checked_add(value).ok_or("Ironwood note total overflow")
     })?;
     Ok(ScanResult { height: request.previous_height + 1, hash: request.block_hash,
-        tree_hex: hex::encode(tree_state), notes, balance: balance.to_string() })
+        tree_hex: request.expected_tree_hex, notes, balance: balance.to_string() })
 }
