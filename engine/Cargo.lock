@@ -195,7 +195,9 @@ version = "0.1.0"
 dependencies = [
  "bs58",
  "hex",
+ "incrementalmerkletree",
  "jubjub",
+ "orchard",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
  "sapling-crypto",
@@ -203,9 +205,11 @@ dependencies = [
  "serde",
  "serde_json",
  "zcash_address",
+ "zcash_note_encryption",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",
+ "zip32",
 ]
 
 [[package]]
@@ -852,6 +856,7 @@ dependencies = [
  "visibility",
  "zcash_note_encryption",
  "zcash_spec",
+ "zeroize",
  "zip32",
 ]
 

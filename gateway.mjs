@@ -53,6 +53,29 @@ export function createGateway({ rpc, network = 'devnet' }) {
     if (!Number.isSafeInteger(info.blocks) || info.blocks < 1) throw new Error('Invalid chain height.');
     return info.blocks;
   }
+  async function addressUtxos(address, height) {
+    const data = await rpc('getaddressutxos', [{ addresses: [address] }]);
+    if (!Array.isArray(data) || data.length > 10_000) throw new Error('Invalid UTXO response.');
+    return data.map(item => {
+      if (String(item.address) !== address || !/^[0-9a-fA-F]{64}$/.test(item.txid) ||
+        !HEX.test(item.script) || !Number.isSafeInteger(item.outputIndex) || item.outputIndex < 0 ||
+        !Number.isSafeInteger(item.height) || item.height > height ||
+        !/^(0|[1-9]\d*)$/.test(String(item.satoshis))) throw new Error('Invalid UTXO data.');
+      return { txid: item.txid, index: item.outputIndex, script_hex: item.script,
+        value: String(item.satoshis), height: item.height, coinbase: false };
+    });
+  }
+  async function classifyCoinbase(batch, transactions) {
+    const txids = [...new Set(batch.map(utxo => utxo.txid))].filter(txid => !transactions.has(txid));
+    for (let j = 0; j < txids.length; j += 10) {
+      const results = await Promise.all(txids.slice(j, j + 10).map(async txid => {
+        const tx = await rpc('getrawtransaction', [txid, 1]);
+        return [txid, Boolean(tx?.vin?.[0]?.coinbase)];
+      }));
+      for (const pair of results) transactions.set(...pair);
+    }
+    for (const utxo of batch) utxo.coinbase = transactions.get(utxo.txid);
+  }
   return createServer(async (request, response) => {
     const origin = String(request.headers.origin ?? '');
     const extensionOrigin = EXTENSION_ORIGIN.test(origin);
@@ -75,21 +98,27 @@ export function createGateway({ rpc, network = 'devnet' }) {
       if (request.method === 'GET' && url.pathname === '/status') {
         return send(200, { chain: config.chain, genesis: config.genesis, height: await verifiedTip() });
       }
+      if (request.method === 'GET' && url.pathname === '/shield-checkpoint') {
+        const height = Math.max(1, (await verifiedTip()) - 10);
+        const [hash, tree] = await Promise.all([
+          rpc('getblockhash', [height]), rpc('z_gettreestate', [String(height)])
+        ]);
+        const treeState = tree?.ironwood?.commitments?.finalState;
+        if (!/^[0-9a-fA-F]{64}$/.test(String(hash)) ||
+          String(tree?.hash).toLowerCase() !== String(hash).toLowerCase() ||
+          Number(tree?.height) !== height || typeof treeState !== 'string' ||
+          treeState.length > 8192 || treeState.length % 2 || !HEX.test(treeState)) {
+          throw new Error('Invalid Ironwood checkpoint.');
+        }
+        return send(200, { chain: config.chain, genesis: config.genesis, height,
+          hash, tree_state_hex: treeState });
+      }
       const match = url.pathname.match(/^\/utxos\/([^/]+)$/);
       if (request.method === 'GET' && match) {
         const address = decodeURIComponent(match[1]);
         if (!ADDRESS.test(address)) return send(400, { error: 'Invalid address.' });
         const height = await verifiedTip();
-        const data = await rpc('getaddressutxos', [{ addresses: [address] }]);
-        if (!Array.isArray(data) || data.length > 10_000) throw new Error('Invalid UTXO response.');
-        const utxos = data.map(item => {
-          if (String(item.address) !== address || !/^[0-9a-fA-F]{64}$/.test(item.txid) ||
-            !HEX.test(item.script) || !Number.isSafeInteger(item.outputIndex) || item.outputIndex < 0 ||
-            !Number.isSafeInteger(item.height) || item.height > height ||
-            !/^(0|[1-9]\d*)$/.test(String(item.satoshis))) throw new Error('Invalid UTXO data.');
-          return { txid: item.txid, index: item.outputIndex, script_hex: item.script,
-            value: String(item.satoshis), height: item.height, coinbase: false };
-        });
+        const utxos = await addressUtxos(address, height);
         const confirmations = utxo => height - utxo.height + 1;
         const byValue = (a, b) => BigInt(a.value) > BigInt(b.value) ? -1 : BigInt(a.value) < BigInt(b.value) ? 1 : 0;
         const candidates = utxos.filter(utxo => confirmations(utxo) >= 10).sort(byValue);
@@ -98,22 +127,62 @@ export function createGateway({ rpc, network = 'devnet' }) {
         const mined = [];
         for (let i = 0; i < candidates.length && spendable.length < 20; i += 20) {
           const batch = candidates.slice(i, i + 20);
-          const txids = [...new Set(batch.map(utxo => utxo.txid))].filter(txid => !transactions.has(txid));
-          for (let j = 0; j < txids.length; j += 10) {
-            const results = await Promise.all(txids.slice(j, j + 10).map(async txid => {
-              const tx = await rpc('getrawtransaction', [txid, 1]);
-              return [txid, Boolean(tx?.vin?.[0]?.coinbase)];
-            }));
-            for (const pair of results) transactions.set(...pair);
-          }
+          await classifyCoinbase(batch, transactions);
           for (const utxo of batch) {
-            utxo.coinbase = transactions.get(utxo.txid);
             if (!utxo.coinbase) spendable.push(utxo);
             else if (confirmations(utxo) >= 240) mined.push(utxo);
           }
         }
         const selected = spendable.length ? spendable.slice(0, 20) : mined.slice(0, 20);
         return send(200, { chain: config.chain, genesis: config.genesis, height, address, utxos: selected });
+      }
+      const shieldMatch = url.pathname.match(/^\/shield-setup\/([^/]+)$/);
+      if (request.method === 'GET' && shieldMatch) {
+        const address = decodeURIComponent(shieldMatch[1]);
+        if (!ADDRESS.test(address)) return send(400, { error: 'Invalid address.' });
+        const height = await verifiedTip();
+        const utxos = await addressUtxos(address, height);
+        const candidates = utxos.filter(utxo => height - utxo.height + 1 >= 240)
+          .sort((a, b) => a.height - b.height || a.txid.localeCompare(b.txid) || a.index - b.index);
+        const transactions = new Map();
+        const rewards = [];
+        for (let i = 0; i < candidates.length && rewards.length < 20; i += 20) {
+          const batch = candidates.slice(i, i + 20);
+          await classifyCoinbase(batch, transactions);
+          rewards.push(...batch.filter(utxo => utxo.coinbase).slice(0, 20 - rewards.length));
+        }
+        const [hash, tree] = await Promise.all([
+          rpc('getblockhash', [height]), rpc('z_gettreestate', [String(height)])
+        ]);
+        const treeState = tree?.ironwood?.commitments?.finalState;
+        if (String(tree?.hash).toLowerCase() !== String(hash).toLowerCase() ||
+          Number(tree?.height) !== height || typeof treeState !== 'string' ||
+          treeState.length > 8192 || treeState.length % 2 || !HEX.test(treeState)) {
+          throw new Error('Invalid Ironwood tree state.');
+        }
+        return send(200, { chain: config.chain, genesis: config.genesis, height, hash,
+          address, tree_state_hex: treeState, rewards });
+      }
+      const blockMatch = url.pathname.match(/^\/shield-block\/(\d{1,10})$/);
+      if (request.method === 'GET' && blockMatch) {
+        const blockHeight = Number(blockMatch[1]);
+        const tip = await verifiedTip();
+        if (!Number.isSafeInteger(blockHeight) || blockHeight < 1 || blockHeight > tip) {
+          return send(400, { error: 'Invalid block height.' });
+        }
+        const hash = await rpc('getblockhash', [blockHeight]);
+        const [rawHex, tree] = await Promise.all([
+          rpc('getblock', [hash, 0]), rpc('z_gettreestate', [String(blockHeight)])
+        ]);
+        const treeState = tree?.ironwood?.commitments?.finalState;
+        if (!/^[0-9a-fA-F]{64}$/.test(String(hash)) || typeof rawHex !== 'string' ||
+          rawHex.length < 160 || rawHex.length > 8_000_000 || rawHex.length % 2 || !HEX.test(rawHex) ||
+          String(tree?.hash).toLowerCase() !== hash.toLowerCase() || Number(tree?.height) !== blockHeight ||
+          typeof treeState !== 'string' || treeState.length > 8192 || treeState.length % 2 || !HEX.test(treeState)) {
+          throw new Error('Invalid Ironwood scan block.');
+        }
+        return send(200, { chain: config.chain, genesis: config.genesis, height: blockHeight,
+          hash, raw_hex: rawHex, tree_state_hex: treeState });
       }
       if (request.method === 'POST' && url.pathname === '/broadcast') {
         if (!extensionOrigin) return send(403, { error: 'Browser extension origin required.' });

@@ -148,6 +148,61 @@ test('mainnet gateway finds an ordinary UTXO behind many mining rewards', async 
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
+test('shield setup returns mature coinbase rewards and the matching Ironwood tree', async () => {
+  const publicAddress = 'CaW9SGDziC187NEtCixMYktjYDyQG5HLvnr';
+  const hash = 'ab'.repeat(32);
+  const rewardTxid = '01'.repeat(32);
+  const ordinaryTxid = '02'.repeat(32);
+  const rpc = async (method, params) => {
+    if (method === 'getblockchaininfo') return { chain: 'catecash-mainnet', blocks: 300 };
+    if (method === 'getblockhash') return params[0] === 0
+      ? '050bf7476db81684aeb38337fc931bd8bc4480fde43fb0a14fef172f85c5c323' : hash;
+    if (method === 'getaddressutxos') return [
+      { address: publicAddress, txid: ordinaryTxid, outputIndex: 0,
+        script: '76a914' + '11'.repeat(20) + '88ac', satoshis: '100000000', height: 1 },
+      { address: publicAddress, txid: rewardTxid, outputIndex: 0,
+        script: '76a914' + '11'.repeat(20) + '88ac', satoshis: '500000000000', height: 1 },
+    ];
+    if (method === 'getrawtransaction') return { vin: [params[0] === rewardTxid ? { coinbase: 'abcd' } : { txid: 'ff' }] };
+    if (method === 'z_gettreestate') return { hash, height: 300, ironwood: { commitments: { finalState: '000000' } } };
+    throw new Error('Unexpected RPC method.');
+  };
+  const server = createGateway({ rpc, network: 'mainnet' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/shield-setup/' + publicAddress);
+    assert.equal(response.status, 200);
+    const setup = await response.json();
+    assert.equal(setup.tree_state_hex, '000000');
+    assert.deepEqual(setup.rewards.map(reward => reward.txid), [rewardTxid]);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('Ironwood checkpoint and scan block are bound to the verified chain', async () => {
+  const hash = 'ab'.repeat(32), parent = 'cd'.repeat(32);
+  const rpc = async (method, params) => {
+    if (method === 'getblockchaininfo') return { chain: 'catecash-devnet', blocks: 300 };
+    if (method === 'getblockhash') return params[0] === 0 ? genesis : params[0] === 290 ? parent : hash;
+    if (method === 'z_gettreestate') return { hash: params[0] === '290' ? parent : hash,
+      height: Number(params[0]), ironwood: { commitments: { finalState: '000000' } } };
+    if (method === 'getblock') return '00'.repeat(100);
+    throw new Error('Unexpected RPC method.');
+  };
+  const server = createGateway({ rpc });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  try {
+    const checkpoint = await (await fetch(base + '/shield-checkpoint')).json();
+    assert.equal(checkpoint.height, 290);
+    assert.equal(checkpoint.hash, parent);
+    const block = await (await fetch(base + '/shield-block/300')).json();
+    assert.equal(block.height, 300);
+    assert.equal(block.hash, hash);
+    assert.equal(block.raw_hex, '00'.repeat(100));
+    assert.equal((await fetch(base + '/shield-block/301')).status, 400);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
 test('a rejected signed transaction returns 422 while the gateway stays healthy', async () => {
   const rpc = createRpc({ fetchImpl: async (_url, request) => {
     const { method } = JSON.parse(request.body);

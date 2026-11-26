@@ -1,6 +1,6 @@
 plugin-wallet-test.catecash.com {
     @gateway {
-        path /status /broadcast /utxos/*
+        path /status /broadcast /utxos/* /shield-checkpoint /shield-setup/* /shield-block/*
     }
     handle @gateway {
         reverse_proxy 127.0.0.1:34777

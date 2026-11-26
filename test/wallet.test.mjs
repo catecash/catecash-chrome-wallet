@@ -1,14 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encryptVault, decryptVault } from '../src/vault.js';
-import { createAccounts, accountAddresses, cateWif } from '../src/accounts.js';
+import { createAccounts, accountAddresses, cateWif, withShieldAccount } from '../src/accounts.js';
 import { cateBalance, formatUnits, CATE_NETWORKS } from '../src/networks.js';
 const secrets = { cateKey: '00'.repeat(31) + '01' };
 
-test('new wallets contain only a Catecash key and legacy backups remain readable', async () => {
+test('new wallets have independent transparent and Ironwood keys; old backups can be upgraded', async () => {
   const created = await createAccounts();
-  assert.deepEqual(Object.keys(created), ['cateKey']);
+  assert.deepEqual(Object.keys(created), ['cateKey', 'shieldSeed']);
   assert.match(created.cateKey, /^[0-9a-f]{64}$/);
+  assert.match(created.shieldSeed, /^[0-9a-f]{64}$/);
+  assert.notEqual(created.cateKey, created.shieldSeed);
+  assert.equal(withShieldAccount(created).upgraded, false);
+  const migrated = withShieldAccount(secrets);
+  assert.equal(migrated.upgraded, true);
+  assert.equal(migrated.secrets.cateKey, secrets.cateKey);
+  assert.match(migrated.secrets.shieldSeed, /^[0-9a-f]{64}$/);
   const legacy = { ...secrets, ethKey: '0x' + '00'.repeat(31) + '01' };
   assert.deepEqual(await accountAddresses(legacy, 'testnet'), await accountAddresses(secrets, 'testnet'));
 });

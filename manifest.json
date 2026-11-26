@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Catecash Wallet",
   "version": "0.1.0",
-  "description": "Local transparent Catecash wallet with send and receive.",
+  "description": "Local Catecash wallet with transparent and Ironwood shielded accounts.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -10,21 +10,28 @@
   },
   "action": {
     "default_title": "Catecash Wallet",
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
       "128": "icons/icon-128.png"
     }
   },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "permissions": [
-    "storage"
+    "storage",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://scan.catecash.com/*",
     "https://scan-testnet.catecash.com/*",
     "https://scan-devnet.catecash.com/*",
     "https://plugin-wallet-test.catecash.com/*",
+    "https://wallet.catecash.com/*",
     "http://127.0.0.1:34777/*"
   ],
   "content_security_policy": {

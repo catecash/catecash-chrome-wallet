@@ -10,6 +10,9 @@ use zcash_transparent::address::TransparentAddress;
 use zcash_transparent::builder::TransparentSigningSet;
 use zcash_transparent::bundle::{OutPoint, TxOut};
 
+mod ironwood;
+mod ironwood_scan;
+
 #[derive(Clone, Copy)]
 enum CateNetwork {
     Devnet,
@@ -338,7 +341,7 @@ impl sapling_crypto::prover::OutputProver for NoSaplingProver {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8 {
-    if size == 0 || size > 100_000 {
+    if size == 0 || size > 16_000_000 {
         return std::ptr::null_mut();
     }
     let bytes = vec![0u8; size].into_boxed_slice();
@@ -370,12 +373,76 @@ pub unsafe extern "C" fn sign_json(pointer: *mut u8, size: usize) -> *mut u8 {
         },
         Err(_) => serde_json::json!({ "error": "invalid signer request" }),
     };
+    frame_response(response)
+}
+
+fn frame_response(response: serde_json::Value) -> *mut u8 {
     let output = response.to_string().into_bytes();
     let len = output.len() as u32;
     let mut framed = Vec::with_capacity(output.len() + 4);
     framed.extend_from_slice(&len.to_le_bytes());
     framed.extend_from_slice(&output);
     Box::into_raw(framed.into_boxed_slice()).cast::<u8>()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shield_json(pointer: *mut u8, size: usize) -> *mut u8 {
+    if pointer.is_null() || size == 0 || size > 100_000 {
+        return std::ptr::null_mut();
+    }
+    let input = unsafe { std::slice::from_raw_parts(pointer, size) };
+    let response = match serde_json::from_slice::<ironwood::ShieldRequest>(input) {
+        Ok(request) => match ironwood::build_shield(request) {
+            Ok(result) => serde_json::json!({ "ok": result }),
+            Err(error) => serde_json::json!({ "error": error }),
+        },
+        Err(_) => serde_json::json!({ "error": "invalid shield request" }),
+    };
+    frame_response(response)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shield_address_json(pointer: *mut u8, size: usize) -> *mut u8 {
+    if pointer.is_null() || size == 0 || size > 100_000 {
+        return std::ptr::null_mut();
+    }
+    let input = unsafe { std::slice::from_raw_parts(pointer, size) };
+    let response = match serde_json::from_slice::<ironwood::AddressRequest>(input) {
+        Ok(request) => match ironwood::shielded_address(&request.shield_seed_hex, &request.network) {
+            Ok(address) => serde_json::json!({ "ok": { "address": address } }),
+            Err(error) => serde_json::json!({ "error": error }),
+        },
+        Err(_) => serde_json::json!({ "error": "invalid shield address request" }),
+    };
+    frame_response(response)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn scan_ironwood_json(pointer: *mut u8, size: usize) -> *mut u8 {
+    if pointer.is_null() || size == 0 || size > 16_000_000 { return std::ptr::null_mut(); }
+    let input = unsafe { std::slice::from_raw_parts(pointer, size) };
+    let response = match serde_json::from_slice::<ironwood_scan::ScanRequest>(input) {
+        Ok(request) => match ironwood_scan::scan_block(request) {
+            Ok(result) => serde_json::json!({ "ok": result }),
+            Err(error) => serde_json::json!({ "error": error }),
+        },
+        Err(_) => serde_json::json!({ "error": "invalid Ironwood scan request" }),
+    };
+    frame_response(response)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shielded_send_json(pointer: *mut u8, size: usize) -> *mut u8 {
+    if pointer.is_null() || size > 500_000 { return std::ptr::null_mut(); }
+    let input = unsafe { std::slice::from_raw_parts(pointer, size) };
+    let response = match serde_json::from_slice::<ironwood::ShieldedSpendRequest>(input) {
+        Ok(request) => match ironwood::build_shielded_send(request) {
+            Ok(result) => serde_json::json!({ "ok": result }),
+            Err(error) => serde_json::json!({ "error": error }),
+        },
+        Err(_) => serde_json::json!({ "error": "invalid shielded spend request" }),
+    };
+    frame_response(response)
 }
 
 #[cfg(test)]

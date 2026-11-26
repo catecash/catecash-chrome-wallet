@@ -38,5 +38,38 @@ test('browser WebAssembly signs Catecash testnet and rejects cross-network desti
   assert.equal(result.network, 'testnet');
   assert.equal(result.source_address, testnetAddress);
   assert.throws(() => sign({ ...request, destination: source }), /selected network/);
-  assert.throws(() => sign({ ...request, network: 'mainnet' }), /devnet and testnet/);
+  assert.throws(() => sign({ ...request, network: 'mainnet' }), /selected network/);
+});
+
+test('browser WebAssembly signs a mainnet transaction with the mainnet address', async () => {
+  const sign = await createSigner(wasm);
+  const mainnetAddress = (await addressAndWif(key, 'mainnet')).address;
+  const result = sign({ network: 'mainnet', secret_hex, destination: mainnetAddress, amount: '500000', tip_height: 300,
+    utxos: [{ txid: '02'.repeat(32), index: 0, value: '1000000', script_hex, height: 1, coinbase: true }] });
+  assert.equal(result.network, 'mainnet');
+  assert.equal(result.source_address, mainnetAddress);
+  assert.match(result.raw_hex, /^[0-9a-f]{100,}$/);
+});
+
+test('browser WebAssembly shields one mature mining reward to its own Ironwood address', async () => {
+  const sign = await createSigner(wasm);
+  const shield_seed_hex = '02'.repeat(32);
+  const shielded = sign.shieldAddress({ network: 'mainnet', shield_seed_hex });
+  const mainnetAddress = (await addressAndWif(key, 'mainnet')).address;
+  const shield = sign.shield({ network: 'mainnet', secret_hex, shield_seed_hex,
+    tip_height: 241, tree_height: 241, tree_state_hex: '000000',
+    utxo: { txid: '04'.repeat(32), index: 0, value: '100000000000', script_hex, height: 1, coinbase: true } });
+  assert.equal(shield.source_address, mainnetAddress);
+  assert.equal(shield.shielded_address, shielded);
+  assert.ok(BigInt(shield.amount) > 0n);
+  assert.match(shield.raw_hex, /^[0-9a-f]{100,}$/);
+  const external = sign.shieldAddress({ network: 'mainnet', shield_seed_hex: '03'.repeat(32) });
+  const externalShield = sign.shield({ network: 'mainnet', secret_hex, shield_seed_hex,
+    tip_height: 241, tree_height: 241, tree_state_hex: '000000', destination: external,
+    utxo: { txid: '05'.repeat(32), index: 0, value: '100000000000', script_hex, height: 1, coinbase: true } });
+  assert.equal(externalShield.shielded_address, external);
+  assert.throws(() => sign.shield({ network: 'mainnet', secret_hex, shield_seed_hex,
+    tip_height: 241, tree_height: 241, tree_state_hex: '000000', destination: mainnetAddress,
+    utxo: { txid: '05'.repeat(32), index: 0, value: '100000000000', script_hex, height: 1, coinbase: true } }),
+  /must shield to an Ironwood address/);
 });
