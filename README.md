@@ -29,7 +29,7 @@ Clicking the toolbar icon opens the wallet in Chrome's side panel by default. In
 - Create, lock, unlock, back up, and restore an encrypted Catecash wallet.
 - Show transparent CATE (including mined rewards) separately from the locally scanned Ironwood balance. Mainnet is the default for new installs; saved network choices remain in place. The network selector is in Settings. CateScan responses are checked against the expected chain name and genesis hash.
 - Copy the receive address. Review destination, network, amount, fee, and input count before a send.
-- Shield one mature mining reward at a time into the plugin-owned Ironwood account or an external Ironwood wallet. The plugin-owned address and seed are in the encrypted backup.
+- Shield one mature mining reward at a time into the plugin-owned Ironwood account. Its address and seed are in the encrypted backup. Shielding directly to another wallet is temporarily disabled.
 - Scan Ironwood blocks locally, verify commitment tree states, maintain note witnesses, and send from a confirmed Ironwood note to a transparent or Ironwood recipient.
 - Build and sign devnet, testnet, and mainnet transactions locally in WebAssembly, then broadcast through the selected network gateway.
 - Reveal the Catecash compressed WIF for external recovery while unlocked.

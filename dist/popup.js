@@ -3579,21 +3579,18 @@
   async function loadShieldCandidate() {
     if (!secrets || !addresses || currentScreen !== "shield") return;
     shieldRewardAvailable = false;
-    updateShieldDestination();
+    updateShieldControls();
     $2("shield-reward").textContent = "Checking mature mining rewards\u2026";
     const activeSecrets = secrets, selectedNetwork = network;
     const setup = await shieldSetup(selectedNetwork, addresses.cateAddress);
     if (secrets !== activeSecrets || network !== selectedNetwork || currentScreen !== "shield") return;
     shieldRewardAvailable = setup.rewards.length > 0;
     $2("shield-reward").textContent = setup.rewards.length ? formatUnits(setup.rewards[0].value, 8) + " CATE" : "No mature reward available";
-    updateShieldDestination();
+    updateShieldControls();
   }
-  function updateShieldDestination() {
-    const external = $2("shield-destination").value === "external";
-    $2("shield-own-address").hidden = external;
-    $2("shield-external-row").hidden = !external;
-    $2("shield-backup-warning").hidden = external || shieldBackupReady;
-    $2("shield-confirm").disabled = !shieldAddress || !shieldRewardAvailable || !external && !shieldBackupReady;
+  function updateShieldControls() {
+    $2("shield-backup-warning").hidden = shieldBackupReady;
+    $2("shield-confirm").disabled = !shieldAddress || !shieldRewardAvailable || !shieldBackupReady;
   }
   async function copyAddress() {
     if (!secrets || !addresses) return;
@@ -3613,7 +3610,7 @@
     }
     $2("shield-address").textContent = shieldAddress ?? "Ironwood engine unavailable";
     $2("shield-copy").disabled = !shieldBackupReady || !shieldAddress;
-    updateShieldDestination();
+    updateShieldControls();
     updateSendForm();
     updateReceive();
     updateDetail();
@@ -3746,13 +3743,9 @@
     await navigator.clipboard.writeText(shieldAddress);
     notice("Ironwood address copied.");
   }));
-  $2("shield-destination").addEventListener("change", updateShieldDestination);
   $2("shield-confirm").addEventListener("click", (event) => run(event.currentTarget, async () => {
-    const external = $2("shield-destination").value === "external";
-    if (!external && !shieldBackupReady) throw new Error("Download the updated encrypted backup before shielding.");
+    if (!shieldBackupReady) throw new Error("Download the updated encrypted backup before shielding.");
     if (!secrets || !addresses || !shieldAddress) throw new Error("Unlock the wallet first.");
-    const destination = external ? $2("shield-external-address").value.trim() : null;
-    if (external && !destination) throw new Error("Enter the external Ironwood address.");
     const activeSecrets = secrets, selectedNetwork = network, expectedAddress = shieldAddress;
     const setup = await shieldSetup(selectedNetwork, addresses.cateAddress);
     const utxo = setup.rewards[0];
@@ -3766,16 +3759,16 @@
       tree_height: setup.height,
       tree_state_hex: setup.tree_state_hex,
       utxo,
-      destination
+      destination: null
     });
     if (secrets !== activeSecrets || network !== selectedNetwork || shieldAddress !== expectedAddress) return;
-    if (!external && transaction.shielded_address !== expectedAddress || transaction.source_address !== addresses.cateAddress) {
+    if (transaction.shielded_address !== expectedAddress || transaction.source_address !== addresses.cateAddress) {
       throw new Error("Shield transaction account does not match the wallet.");
     }
     const approved = confirm(`Shield ${formatUnits(transaction.amount, 8)} CATE from your mining reward?
 
 Fee: ${formatUnits(transaction.fee, 8)} CATE
-Destination: ${transaction.shielded_address}${external ? "\n\nThis wallet will not control funds sent to the external address." : ""}`);
+Destination: ${transaction.shielded_address}`);
     if (!approved) {
       notice("Shielding canceled.");
       return;
@@ -3938,7 +3931,7 @@ Destination: ${transaction.shielded_address}${external ? "\n\nThis wallet will n
     shieldBackupReady = true;
     chrome.storage.local.set({ shieldBackupReady: true });
     $2("shield-copy").disabled = false;
-    updateShieldDestination();
+    updateShieldControls();
     notice("Encrypted backup downloaded. Keep its password separately.");
   });
   $2("show-keys").addEventListener("click", (event) => run(event.currentTarget, async () => {

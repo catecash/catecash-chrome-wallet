@@ -147,21 +147,18 @@ function reviewTransfer({ amount, to, networkName, fee, inputs, source = 'Transp
 }
 async function loadShieldCandidate() {
   if (!secrets || !addresses || currentScreen !== 'shield') return;
-  shieldRewardAvailable = false; updateShieldDestination();
+  shieldRewardAvailable = false; updateShieldControls();
   $('shield-reward').textContent = 'Checking mature mining rewards…';
   const activeSecrets = secrets, selectedNetwork = network;
   const setup = await shieldSetup(selectedNetwork, addresses.cateAddress);
   if (secrets !== activeSecrets || network !== selectedNetwork || currentScreen !== 'shield') return;
   shieldRewardAvailable = setup.rewards.length > 0;
   $('shield-reward').textContent = setup.rewards.length ? formatUnits(setup.rewards[0].value, 8) + ' CATE' : 'No mature reward available';
-  updateShieldDestination();
+  updateShieldControls();
 }
-function updateShieldDestination() {
-  const external = $('shield-destination').value === 'external';
-  $('shield-own-address').hidden = external;
-  $('shield-external-row').hidden = !external;
-  $('shield-backup-warning').hidden = external || shieldBackupReady;
-  $('shield-confirm').disabled = !shieldAddress || !shieldRewardAvailable || (!external && !shieldBackupReady);
+function updateShieldControls() {
+  $('shield-backup-warning').hidden = shieldBackupReady;
+  $('shield-confirm').disabled = !shieldAddress || !shieldRewardAvailable || !shieldBackupReady;
 }
 async function copyAddress() { if (!secrets || !addresses) return; await navigator.clipboard.writeText(addresses.cateAddress); notice('Address copied.'); }
 
@@ -173,7 +170,7 @@ async function enterWallet(nextSecrets) {
   catch { shieldAddress = null; }
   $('shield-address').textContent = shieldAddress ?? 'Ironwood engine unavailable';
   $('shield-copy').disabled = !shieldBackupReady || !shieldAddress;
-  updateShieldDestination();
+  updateShieldControls();
   updateSendForm(); updateReceive(); updateDetail();
   idleLock.start();
   view('wallet'); navigate('home');
@@ -254,13 +251,9 @@ $('shield-copy').addEventListener('click', event => run(event.currentTarget, asy
   if (!shieldAddress) throw new Error('Ironwood address is unavailable.');
   await navigator.clipboard.writeText(shieldAddress); notice('Ironwood address copied.');
 }));
-$('shield-destination').addEventListener('change', updateShieldDestination);
 $('shield-confirm').addEventListener('click', event => run(event.currentTarget, async () => {
-  const external = $('shield-destination').value === 'external';
-  if (!external && !shieldBackupReady) throw new Error('Download the updated encrypted backup before shielding.');
+  if (!shieldBackupReady) throw new Error('Download the updated encrypted backup before shielding.');
   if (!secrets || !addresses || !shieldAddress) throw new Error('Unlock the wallet first.');
-  const destination = external ? $('shield-external-address').value.trim() : null;
-  if (external && !destination) throw new Error('Enter the external Ironwood address.');
   const activeSecrets = secrets, selectedNetwork = network, expectedAddress = shieldAddress;
   const setup = await shieldSetup(selectedNetwork, addresses.cateAddress);
   const utxo = setup.rewards[0];
@@ -270,13 +263,13 @@ $('shield-confirm').addEventListener('click', event => run(event.currentTarget, 
     network: selectedNetwork, secret_hex: activeSecrets.cateKey,
     shield_seed_hex: activeSecrets.shieldSeed, tip_height: setup.height,
     tree_height: setup.height, tree_state_hex: setup.tree_state_hex, utxo,
-    destination
+    destination: null
   });
   if (secrets !== activeSecrets || network !== selectedNetwork || shieldAddress !== expectedAddress) return;
-  if ((!external && transaction.shielded_address !== expectedAddress) || transaction.source_address !== addresses.cateAddress) {
+  if (transaction.shielded_address !== expectedAddress || transaction.source_address !== addresses.cateAddress) {
     throw new Error('Shield transaction account does not match the wallet.');
   }
-  const approved = confirm(`Shield ${formatUnits(transaction.amount, 8)} CATE from your mining reward?\n\nFee: ${formatUnits(transaction.fee, 8)} CATE\nDestination: ${transaction.shielded_address}${external ? '\n\nThis wallet will not control funds sent to the external address.' : ''}`);
+  const approved = confirm(`Shield ${formatUnits(transaction.amount, 8)} CATE from your mining reward?\n\nFee: ${formatUnits(transaction.fee, 8)} CATE\nDestination: ${transaction.shielded_address}`);
   if (!approved) { notice('Shielding canceled.'); return; }
   const txid = await broadcastCate(selectedNetwork, transaction.raw_hex);
   if (secrets !== activeSecrets) return;
@@ -377,7 +370,7 @@ $('download-backup').addEventListener('click', () => {
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'catecash-wallet-backup.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   shieldBackupReady = true; chrome.storage.local.set({ shieldBackupReady: true });
-  $('shield-copy').disabled = false; updateShieldDestination();
+  $('shield-copy').disabled = false; updateShieldControls();
   notice('Encrypted backup downloaded. Keep its password separately.');
 });
 $('show-keys').addEventListener('click', event => run(event.currentTarget, async () => {
